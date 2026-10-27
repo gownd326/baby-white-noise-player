@@ -245,18 +245,22 @@ export default function App() {
     };
   }, [timerMinutes, soundStates, remainingSeconds, startFadeOutAndStop]);
 
-  // 개별 사운드 토글
+  // SPEC 단일 플레이어 원칙: 새로운 소음 선택 시 기존 재생 중이던 오디오 즉시 정지하고 새로 선택된 오디오만 단독 재생
   const handleToggleSound = (id: string) => {
     setSoundStates((prev) => {
-      const current = prev[id];
-      const nextPlaying = !current.isPlaying;
-      return {
-        ...prev,
-        [id]: { ...current, isPlaying: nextPlaying },
-      };
+      const targetWasPlaying = prev[id].isPlaying;
+      const next: Record<string, SoundState> = {};
+      SOUNDS.forEach((sound) => {
+        if (sound.id === id) {
+          next[sound.id] = { ...prev[sound.id], isPlaying: !targetWasPlaying };
+        } else {
+          next[sound.id] = { ...prev[sound.id], isPlaying: false };
+        }
+      });
+      return next;
     });
 
-    if (!Object.values(soundStates).some((s) => s.isPlaying) && timerMinutes !== 'infinite') {
+    if (timerMinutes !== 'infinite') {
       setRemainingSeconds((timerMinutes as number) * 60);
     }
   };

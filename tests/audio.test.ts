@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useAudioMixer } from '../src/hooks/useAudioMixer';
 
-describe('useAudioMixer 훅 테스트', () => {
+describe('useAudioMixer 훅 단일 플레이어 원칙 테스트', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     localStorage.clear();
@@ -12,34 +12,28 @@ describe('useAudioMixer 훅 테스트', () => {
     vi.useRealTimers();
   });
 
-  it('멀티 오디오 믹싱: 여러 소리를 개별적으로 켜고 볼륨을 조절할 수 있다', () => {
+  it('단일 플레이어 원칙: 새로운 소음을 선택하면 기존에 재생되던 소음은 즉시 정지하고 새로 선택된 소음만 단독 재생된다', () => {
     const { result } = renderHook(() => useAudioMixer());
 
     // 초기 상태 확인
     expect(result.current.soundStates['rain'].isPlaying).toBe(false);
-    expect(result.current.soundStates['womb'].isPlaying).toBe(false);
+    expect(result.current.soundStates['wave'].isPlaying).toBe(false);
 
     // 빗소리 재생 켜기
     act(() => {
       result.current.toggleSound('rain');
     });
     expect(result.current.soundStates['rain'].isPlaying).toBe(true);
+    expect(result.current.soundStates['wave'].isPlaying).toBe(false);
     expect(result.current.isGlobalPlaying).toBe(true);
 
-    // 심장박동 소리 재생 켜기 (멀티 믹싱)
+    // 파도 소리 새로 선택 (단일 플레이어 원칙: 빗소리는 꺼지고 파도소리만 켜짐)
     act(() => {
-      result.current.toggleSound('womb');
+      result.current.toggleSound('wave');
     });
-    expect(result.current.soundStates['womb'].isPlaying).toBe(true);
-
-    // 각 소리별 볼륨 조절
-    act(() => {
-      result.current.setVolume('rain', 0.4);
-      result.current.setVolume('womb', 0.8);
-    });
-
-    expect(result.current.soundStates['rain'].volume).toBe(0.4);
-    expect(result.current.soundStates['womb'].volume).toBe(0.8);
+    expect(result.current.soundStates['rain'].isPlaying).toBe(false);
+    expect(result.current.soundStates['wave'].isPlaying).toBe(true);
+    expect(result.current.isGlobalPlaying).toBe(true);
   });
 
   it('페이드아웃 테스트: startFadeOut 호출 시 5초간 점진적으로 볼륨이 줄어들고 정지한다', () => {

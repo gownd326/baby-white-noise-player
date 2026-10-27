@@ -107,14 +107,21 @@ export function useAudioMixer() {
     });
   }, [soundStates, masterVolume, isGlobalPlaying, isFadingOut]);
 
+  // SPEC 단일 플레이어 원칙: 새로운 소음 선택 시, 기존에 재생 중이던 오디오는 즉시 정지하고 새로 선택된 오디오 파일만 단독으로 재생
   const toggleSound = useCallback((id: string) => {
-    setSoundStates((prev) => ({
-      ...prev,
-      [id]: {
-        ...prev[id],
-        isPlaying: !prev[id].isPlaying,
-      },
-    }));
+    setSoundStates((prev) => {
+      const targetWasPlaying = prev[id].isPlaying;
+      const next: Record<string, SoundState> = {};
+      SOUNDS.forEach((sound) => {
+        if (sound.id === id) {
+          next[sound.id] = { ...prev[sound.id], isPlaying: !targetWasPlaying };
+        } else {
+          // 다른 모든 오디오는 즉시 정지
+          next[sound.id] = { ...prev[sound.id], isPlaying: false };
+        }
+      });
+      return next;
+    });
   }, []);
 
   const setVolume = useCallback((id: string, volume: number) => {
