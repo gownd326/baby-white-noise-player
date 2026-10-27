@@ -1,9 +1,9 @@
 import React from 'react';
 import { CloudRain, Heart, Waves, Wind, Droplets, Volume2, Play, Pause } from 'lucide-react';
-import { SoundItem } from '../types';
+import { SoundDefinition } from '../types';
 
 interface PlayerCardProps {
-  sound: SoundItem;
+  sound: SoundDefinition;
   isPlaying: boolean;
   volume: number;
   onToggle: (id: string) => void;
@@ -43,7 +43,6 @@ export default function PlayerCard({
           : 'border-slate-700/60 hover:border-slate-600'
       }`}
     >
-      {/* 상단: 아이콘, 이름, 재생 토글 버튼 */}
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-3">
           <div
@@ -76,7 +75,6 @@ export default function PlayerCard({
         </button>
       </div>
 
-      {/* 하단: 개별 볼륨 조절 슬라이더 */}
       <div className="flex items-center gap-3 pt-3 border-t border-slate-700/40">
         <Volume2 className="w-4 h-4 text-slate-400 flex-shrink-0" />
         <input

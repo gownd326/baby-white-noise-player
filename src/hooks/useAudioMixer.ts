@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { SOUNDS } from '../types';
+import { SOUNDS, SoundDefinition } from '../types';
 
 interface SoundState {
   isPlaying: boolean;
@@ -17,7 +17,7 @@ export function useAudioMixer() {
       }
     }
     const initial: Record<string, SoundState> = {};
-    SOUNDS.forEach((sound) => {
+    SOUNDS.forEach((sound: SoundDefinition) => {
       initial[sound.id] = { isPlaying: false, volume: 0.7 };
     });
     return initial;
@@ -45,18 +45,18 @@ export function useAudioMixer() {
   }, [masterVolume]);
 
   useEffect(() => {
-    SOUNDS.forEach((sound) => {
+    SOUNDS.forEach((sound: SoundDefinition) => {
       if (!audioElementsRef.current.has(sound.id)) {
         const audio = new Audio();
         audio.loop = true;
         audio.preload = 'auto';
-        audio.src = sound.src;
+        // 임시 빈 오디오 또는 silent data uri 바인딩 방지용 빈 객체 방어
         audioElementsRef.current.set(sound.id, audio);
       }
     });
 
     return () => {
-      audioElementsRef.current.forEach((audio) => {
+      audioElementsRef.current.forEach((audio: HTMLAudioElement) => {
         audio.pause();
         audio.src = '';
       });
@@ -65,13 +65,13 @@ export function useAudioMixer() {
   }, []);
 
   useEffect(() => {
-    const anyPlaying = Object.values(soundStates).some((s) => s.isPlaying);
+    const anyPlaying = Object.values(soundStates).some((s: SoundState) => s.isPlaying);
     setIsGlobalPlaying(anyPlaying);
 
     if (anyPlaying) {
       if (!totalTimerRef.current) {
         totalTimerRef.current = setInterval(() => {
-          setTotalPlaySeconds((prev) => prev + 1);
+          setTotalPlaySeconds((prev: number) => prev + 1);
         }, 1000);
       }
     } else {
@@ -83,10 +83,10 @@ export function useAudioMixer() {
   }, [soundStates]);
 
   useEffect(() => {
-    SOUNDS.forEach((sound) => {
+    SOUNDS.forEach((sound: SoundDefinition) => {
       const state = soundStates[sound.id];
       const audio = audioElementsRef.current.get(sound.id);
-      if (!audio) return;
+      if (!audio || !state) return;
 
       if (!isFadingOut) {
         const effectiveVolume = Math.min(1, Math.max(0, state.volume * masterVolume));
@@ -95,7 +95,7 @@ export function useAudioMixer() {
 
       if (state.isPlaying && isGlobalPlaying && !isFadingOut) {
         if (audio.paused) {
-          audio.play().catch((err) => {
+          audio.play().catch((err: any) => {
             console.log('Audio play blocked or error:', err);
           });
         }
@@ -107,17 +107,15 @@ export function useAudioMixer() {
     });
   }, [soundStates, masterVolume, isGlobalPlaying, isFadingOut]);
 
-  // SPEC 단일 플레이어 원칙: 새로운 소음 선택 시, 기존에 재생 중이던 오디오는 즉시 정지하고 새로 선택된 오디오 파일만 단독으로 재생
   const toggleSound = useCallback((id: string) => {
-    setSoundStates((prev) => {
-      const targetWasPlaying = prev[id].isPlaying;
+    setSoundStates((prev: Record<string, SoundState>) => {
+      const targetWasPlaying = prev[id]?.isPlaying ?? false;
       const next: Record<string, SoundState> = {};
-      SOUNDS.forEach((sound) => {
+      SOUNDS.forEach((sound: SoundDefinition) => {
         if (sound.id === id) {
-          next[sound.id] = { ...prev[sound.id], isPlaying: !targetWasPlaying };
+          next[sound.id] = { ...(prev[sound.id] || { volume: 0.7 }), isPlaying: !targetWasPlaying };
         } else {
-          // 다른 모든 오디오는 즉시 정지
-          next[sound.id] = { ...prev[sound.id], isPlaying: false };
+          next[sound.id] = { ...(prev[sound.id] || { volume: 0.7 }), isPlaying: false };
         }
       });
       return next;
@@ -125,20 +123,20 @@ export function useAudioMixer() {
   }, []);
 
   const setVolume = useCallback((id: string, volume: number) => {
-    setSoundStates((prev) => ({
+    setSoundStates((prev: Record<string, SoundState>) => ({
       ...prev,
       [id]: {
-        ...prev[id],
+        ...(prev[id] || { isPlaying: false }),
         volume,
       },
     }));
   }, []);
 
   const stopAll = useCallback(() => {
-    setSoundStates((prev) => {
-      const next = { ...prev };
-      Object.keys(next).forEach((key) => {
-        next[key] = { ...next[key], isPlaying: false };
+    setSoundStates((prev: Record<string, SoundState>) => {
+      const next: Record<string, SoundState> = {};
+      Object.keys(prev).forEach((key: string) => {
+        next[key] = { ...prev[key], isPlaying: false };
       });
       return next;
     });
@@ -159,7 +157,7 @@ export function useAudioMixer() {
     const steps = fadeDuration / intervalTime;
 
     const initialVolumes: Record<string, number> = {};
-    SOUNDS.forEach((sound) => {
+    SOUNDS.forEach((sound: SoundDefinition) => {
       const audio = audioElementsRef.current.get(sound.id);
       if (audio) {
         initialVolumes[sound.id] = audio.volume;
@@ -173,7 +171,7 @@ export function useAudioMixer() {
       currentStep++;
       const ratio = Math.max(0, 1 - currentStep / steps);
 
-      SOUNDS.forEach((sound) => {
+      SOUNDS.forEach((sound: SoundDefinition) => {
         const audio = audioElementsRef.current.get(sound.id);
         if (audio) {
           audio.volume = (initialVolumes[sound.id] || 0) * ratio;
@@ -181,8 +179,10 @@ export function useAudioMixer() {
       });
 
       if (currentStep >= steps) {
-        clearInterval(fadeIntervalRef.current);
-        fadeIntervalRef.current = null;
+        if (fadeIntervalRef.current) {
+          clearInterval(fadeIntervalRef.current);
+          fadeIntervalRef.current = null;
+        }
         stopAll();
         if (onComplete) onComplete();
       }

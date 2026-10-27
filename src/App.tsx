@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { SOUNDS, SoundItem, TimerOption } from './types';
+import { SOUNDS, SoundDefinition, TimerOption } from './types';
+import { generateWavBlob } from './utils/wavGenerator';
 import Header from './components/Header';
 import PlayerCard from './components/PlayerCard';
 import TimerModal from './components/TimerModal';
@@ -12,7 +13,6 @@ interface SoundState {
 }
 
 export default function App() {
-  // 음원별 재생 상태 및 볼륨 (localStorage 로드)
   const [soundStates, setSoundStates] = useState<Record<string, SoundState>>(() => {
     const saved = localStorage.getItem('baby_white_noise_states');
     if (saved) {
@@ -29,36 +29,47 @@ export default function App() {
     return initial;
   });
 
-  // 전체 볼륨
   const [masterVolume, setMasterVolume] = useState<number>(() => {
     const saved = localStorage.getItem('baby_white_noise_master_vol');
     return saved !== null ? parseFloat(saved) : 1.0;
   });
 
-  // 전체 재생 여부
   const [isGlobalPlaying, setIsGlobalPlaying] = useState<boolean>(false);
-
-  // 총 재생 시간 (초)
   const [totalPlaySeconds, setTotalPlaySeconds] = useState<number>(0);
-
-  // 타이머 관련 (TimerOption 형식 고수)
   const [timerMinutes, setTimerMinutes] = useState<TimerOption>(30);
   const [remainingSeconds, setRemainingSeconds] = useState<number | null>(null);
   const [isTimerModalOpen, setIsTimerModalOpen] = useState<boolean>(false);
   const [isFadingOut, setIsFadingOut] = useState<boolean>(false);
+  const [wavUrls, setWavUrls] = useState<Record<string, string>>({});
 
-  // Wake Lock 연동
   const { requestWakeLock, releaseWakeLock } = useWakeLock();
 
-  // HTML Audio 객체들을 관리하는 맵 ref
   const audioElementsRef = useRef<Map<string, HTMLAudioElement>>(new Map());
-  // 페이드아웃 타이머/인터벌 ref
   const fadeIntervalRef = useRef<any>(null);
   const totalTimerRef = useRef<any>(null);
   const countdownTimerRef = useRef<any>(null);
   const fadeStepRef = useRef<number>(0);
 
-  // localStorage 저장
+  // 앱 구동 시 오디오 버퍼 기반 .wav Blob URL 동적 생성
+  useEffect(() => {
+    let isMounted = true;
+    async function initWavs() {
+      const urls: Record<string, string> = {};
+      for (const sound of SOUNDS) {
+        const url = await generateWavBlob(sound.type, sound.durationSec);
+        urls[sound.id] = url;
+      }
+      if (isMounted) {
+        setWavUrls(urls);
+      }
+    }
+    initWavs();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   useEffect(() => {
     localStorage.setItem('baby_white_noise_states', JSON.stringify(soundStates));
   }, [soundStates]);
@@ -67,14 +78,17 @@ export default function App() {
     localStorage.setItem('baby_white_noise_master_vol', masterVolume.toString());
   }, [masterVolume]);
 
-  // 오디오 엘리먼트 초기화 및 관리
+  // WAV URL이 준비되면 Audio 객체 바인딩
   useEffect(() => {
+    if (Object.keys(wavUrls).length === 0) return;
+
     SOUNDS.forEach((sound) => {
-      if (!audioElementsRef.current.has(sound.id)) {
+      const url = wavUrls[sound.id];
+      if (url && !audioElementsRef.current.has(sound.id)) {
         const audio = new Audio();
         audio.loop = true;
         audio.preload = 'auto';
-        audio.src = sound.src;
+        audio.src = url;
         audioElementsRef.current.set(sound.id, audio);
       }
     });
@@ -86,9 +100,9 @@ export default function App() {
       });
       audioElementsRef.current.clear();
     };
-  }, []);
+  }, [wavUrls]);
 
-  // 총 재생 시간 카운터 (최소 1개 이상 재생 중일 때 증가)
+  // 총 재생 시간 카운터
   useEffect(() => {
     const anyPlaying = Object.values(soundStates).some((s) => s.isPlaying);
     setIsGlobalPlaying(anyPlaying);
@@ -105,10 +119,7 @@ export default function App() {
         clearInterval(totalTimerRef.current);
         totalTimerRef.current = null;
       }
-      const activePlaying = Object.values(soundStates).some((s) => s.isPlaying);
-      if (!activePlaying) {
-        releaseWakeLock();
-      }
+      releaseWakeLock();
     }
   }, [soundStates, requestWakeLock, releaseWakeLock]);
 
@@ -138,7 +149,6 @@ export default function App() {
     });
   }, [soundStates, masterVolume, isGlobalPlaying, isFadingOut]);
 
-  // 정지 함수
   const stopAllSounds = useCallback(() => {
     setSoundStates((prev) => {
       const next = { ...prev };
@@ -161,7 +171,6 @@ export default function App() {
     releaseWakeLock();
   }, [releaseWakeLock]);
 
-  // 페이드 아웃 시작 함수 (5초간 점진적 감소 후 정지)
   const startFadeOutAndStop = useCallback(() => {
     if (isFadingOut) return;
     setIsFadingOut(true);
@@ -179,62 +188,55 @@ export default function App() {
     });
 
     fadeStepRef.current = 0;
-
     if (fadeIntervalRef.current) clearInterval(fadeIntervalRef.current);
 
     fadeIntervalRef.current = setInterval(() => {
       fadeStepRef.current += 1;
       const progress = fadeStepRef.current / steps;
+      const ratio = Math.max(0, 1 - progress);
 
-      if (progress >= 1) {
-        clearInterval(fadeIntervalRef.current);
-        fadeIntervalRef.current = null;
+      SOUNDS.forEach((sound) => {
+        const audio = audioElementsRef.current.get(sound.id);
+        if (audio) {
+          audio.volume = (initialVolumes[sound.id] || 0) * ratio;
+        }
+      });
+
+      if (fadeStepRef.current >= steps) {
+        if (fadeIntervalRef.current) {
+          clearInterval(fadeIntervalRef.current);
+          fadeIntervalRef.current = null;
+        }
         stopAllSounds();
-      } else {
-        SOUNDS.forEach((sound) => {
-          const audio = audioElementsRef.current.get(sound.id);
-          const initVol = initialVolumes[sound.id] ?? 0;
-          if (audio) {
-            audio.volume = Math.max(0, initVol * (1 - progress));
-          }
-        });
       }
     }, intervalTime);
   }, [isFadingOut, stopAllSounds]);
 
-  // 타이머 관리
+  // 타이머 핸들링
   useEffect(() => {
-    if (timerMinutes === 'infinite') {
-      if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
-      setRemainingSeconds(null);
-      return;
+    if (countdownTimerRef.current) {
+      clearInterval(countdownTimerRef.current);
+      countdownTimerRef.current = null;
     }
 
-    const anyPlaying = Object.values(soundStates).some((s) => s.isPlaying);
-    if (anyPlaying) {
-      if (remainingSeconds === null) {
-        setRemainingSeconds((timerMinutes as number) * 60);
-      }
+    if (isGlobalPlaying && timerMinutes !== 'infinite') {
+      const totalSecs = timerMinutes * 60;
+      setRemainingSeconds(totalSecs);
 
-      if (!countdownTimerRef.current) {
-        countdownTimerRef.current = setInterval(() => {
-          setRemainingSeconds((prev) => {
-            if (prev === null) return null;
-            if (prev <= 1) {
-              clearInterval(countdownTimerRef.current);
-              countdownTimerRef.current = null;
-              startFadeOutAndStop();
-              return 0;
-            }
-            return prev - 1;
-          });
-        }, 1000);
-      }
+      countdownTimerRef.current = setInterval(() => {
+        setRemainingSeconds((prev) => {
+          if (prev === null) return null;
+          if (prev <= 1) {
+            clearInterval(countdownTimerRef.current);
+            countdownTimerRef.current = null;
+            startFadeOutAndStop();
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
     } else {
-      if (countdownTimerRef.current) {
-        clearInterval(countdownTimerRef.current);
-        countdownTimerRef.current = null;
-      }
+      setRemainingSeconds(null);
     }
 
     return () => {
@@ -243,70 +245,58 @@ export default function App() {
         countdownTimerRef.current = null;
       }
     };
-  }, [timerMinutes, soundStates, remainingSeconds, startFadeOutAndStop]);
+  }, [isGlobalPlaying, timerMinutes, startFadeOutAndStop]);
 
-  // SPEC 단일 플레이어 원칙: 새로운 소음 선택 시 기존 재생 중이던 오디오 즉시 정지하고 새로 선택된 오디오만 단독 재생
-  const handleToggleSound = (id: string) => {
+  // 단일 플레이어 선택 방식 (기존 소음 정지 및 선택한 소음 단독 재생)
+  const handleToggleSound = useCallback((id: string) => {
     setSoundStates((prev) => {
-      const targetWasPlaying = prev[id].isPlaying;
+      const targetWasPlaying = prev[id]?.isPlaying ?? false;
       const next: Record<string, SoundState> = {};
       SOUNDS.forEach((sound) => {
         if (sound.id === id) {
-          next[sound.id] = { ...prev[sound.id], isPlaying: !targetWasPlaying };
+          next[sound.id] = {
+            ...(prev[sound.id] || { volume: 0.7 }),
+            isPlaying: !targetWasPlaying,
+          };
         } else {
-          next[sound.id] = { ...prev[sound.id], isPlaying: false };
+          next[sound.id] = {
+            ...(prev[sound.id] || { volume: 0.7 }),
+            isPlaying: false,
+          };
         }
       });
       return next;
     });
-
-    if (timerMinutes !== 'infinite') {
-      setRemainingSeconds((timerMinutes as number) * 60);
+    if (isFadingOut) {
+      setIsFadingOut(false);
+      if (fadeIntervalRef.current) {
+        clearInterval(fadeIntervalRef.current);
+        fadeIntervalRef.current = null;
+      }
     }
-  };
+  }, [isFadingOut]);
 
-  // 개별 볼륨 조절
-  const handleVolumeChange = (id: string, vol: number) => {
+  const handleVolumeChange = useCallback((id: string, vol: number) => {
     setSoundStates((prev) => ({
       ...prev,
-      [id]: { ...prev[id], volume: vol },
+      [id]: {
+        ...(prev[id] || { isPlaying: false }),
+        volume: vol,
+      },
     }));
-  };
+  }, []);
 
-  // 전체 재생/정지 버튼 클릭
-  const handleGlobalToggle = () => {
+  const handleGlobalToggle = useCallback(() => {
     if (isGlobalPlaying) {
       stopAllSounds();
     } else {
-      const hasAnyOn = Object.values(soundStates).some((s) => s.isPlaying);
-      if (!hasAnyOn) {
-        setSoundStates((prev) => ({
-          ...prev,
-          rain: { ...prev.rain, isPlaying: true },
-        }));
-      } else {
-        setIsGlobalPlaying(true);
-      }
-      if (timerMinutes !== 'infinite' && remainingSeconds === null) {
-        setRemainingSeconds((timerMinutes as number) * 60);
-      }
+      const activeId = Object.keys(soundStates).find((k) => soundStates[k].isPlaying) || SOUNDS[0].id;
+      handleToggleSound(activeId);
     }
-  };
-
-  // 타이머 설정 변경
-  const handleSelectTimer = (mins: TimerOption) => {
-    setTimerMinutes(mins);
-    if (mins === 'infinite') {
-      setRemainingSeconds(null);
-    } else {
-      setRemainingSeconds(mins * 60);
-    }
-    setIsTimerModalOpen(false);
-  };
+  }, [isGlobalPlaying, soundStates, stopAllSounds, handleToggleSound]);
 
   return (
-    <div className="min-h-screen bg-[#121826] text-[#F1F5F9] flex flex-col justify-between selection:bg-[#818CF8] selection:text-white font-sans">
-      {/* 헤더 컴포넌트 */}
+    <div className="min-h-screen bg-[#121826] text-[#F1F5F9] pb-32 flex flex-col">
       <Header
         totalPlaySeconds={totalPlaySeconds}
         remainingSeconds={remainingSeconds}
@@ -314,40 +304,49 @@ export default function App() {
         onOpenTimer={() => setIsTimerModalOpen(true)}
       />
 
-      {/* 메인 영역: 백색소음 카드 그리드 */}
-      <main className="flex-1 max-w-5xl w-full mx-auto px-4 py-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5 items-center">
-        {SOUNDS.map((sound: SoundItem) => {
-          const state = soundStates[sound.id] || { isPlaying: false, volume: 0.7 };
-          return (
-            <PlayerCard
-              key={sound.id}
-              sound={sound}
-              isPlaying={state.isPlaying && isGlobalPlaying}
-              volume={state.volume}
-              onToggle={handleToggleSound}
-              onVolumeChange={handleVolumeChange}
-            />
-          );
-        })}
+      <main className="flex-1 max-w-4xl w-full mx-auto px-4 py-6 flex flex-col gap-6">
+        <div className="bg-[#1E293B]/60 border border-slate-700/50 rounded-2xl p-6 text-center shadow-lg backdrop-blur">
+          <h2 className="text-xl font-bold text-[#F1F5F9] mb-2">
+            단일 플레이어 백색소음 시스템
+          </h2>
+          <p className="text-sm text-slate-300 max-w-lg mx-auto">
+            아기가 가장 편안해 하는 소음을 선택해 주세요. 하나의 소음만 집중 재생되어 아기의 숙면을 돕습니다.
+          </p>
+        </div>
+
+        {/* 6종 소음 리스트 카드 그리드 */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {SOUNDS.map((sound) => {
+            const state = soundStates[sound.id] || { isPlaying: false, volume: 0.7 };
+            return (
+              <PlayerCard
+                key={sound.id}
+                sound={sound}
+                isPlaying={state.isPlaying}
+                volume={state.volume}
+                onToggle={handleToggleSound}
+                onVolumeChange={handleVolumeChange}
+              />
+            );
+          })}
+        </div>
       </main>
 
-      {/* 하단 컨트롤러 */}
       <BottomController
         isGlobalPlaying={isGlobalPlaying}
         onGlobalToggle={handleGlobalToggle}
-        onOpenTimer={() => setIsTimerModalOpen(true)}
-        timerMinutes={timerMinutes}
-        remainingSeconds={remainingSeconds}
         masterVolume={masterVolume}
         onMasterVolumeChange={setMasterVolume}
+        timerMinutes={timerMinutes}
+        remainingSeconds={remainingSeconds}
+        onOpenTimer={() => setIsTimerModalOpen(true)}
       />
 
-      {/* 타이머 모달 */}
       <TimerModal
         isOpen={isTimerModalOpen}
-        currentTimer={timerMinutes}
-        onSelectTimer={handleSelectTimer}
         onClose={() => setIsTimerModalOpen(false)}
+        currentTimer={timerMinutes}
+        onSelectTimer={(opt) => setTimerMinutes(opt)}
       />
     </div>
   );
